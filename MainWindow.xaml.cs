@@ -13,6 +13,10 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MonitoredWindow> _windows = new();
     private readonly Dictionary<IntPtr, MonitoredWindow> _byHandle = new();
     private readonly Dictionary<IntPtr, byte[]> _signatures = new();
+    // Windows the user manually focused since the last status scan. Their pixels
+    // changed because of the user, not the VM, so the next scan rebaselines them
+    // silently instead of flagging a (false) green "Active".
+    private readonly HashSet<IntPtr> _viewedSinceScan = new();
     private readonly DispatcherTimer _timer = new();
     private readonly DispatcherTimer _updateTimer = new();
     private WinForms.NotifyIcon? _trayIcon;
@@ -99,11 +103,13 @@ public partial class MainWindow : Window
         _foregroundHandle = hwnd;
 
         // The VM the user just left should drop out of "Viewing" immediately,
-        // rather than lingering until the next poll.
+        // rather than lingering until the next poll. Mark it so the next scan
+        // rebaselines it: any pixel changes while they looked were theirs, not the VM's.
         if (_viewingItem is not null && _viewingItem.Handle != hwnd)
         {
             if (_viewingItem.Status == "Viewing")
                 _viewingItem.Status = "Idle";
+            _viewedSinceScan.Add(_viewingItem.Handle);
             _viewingItem = null;
         }
 
@@ -114,6 +120,7 @@ public partial class MainWindow : Window
             item.Status = "Viewing";
             item.Order = ++_orderSeq;
             _viewingItem = item;
+            _viewedSinceScan.Add(hwnd);
             ResortWindows();
         }
 
@@ -494,6 +501,9 @@ public partial class MainWindow : Window
         var updateInterval = TimeSpan.FromSeconds(updateSeconds);
         if (_updateTimer.Interval != updateInterval)
             _updateTimer.Interval = updateInterval;
+
+        // Keep the OCR title-ignore list in sync with the user's edits.
+        ScreenText.SetIgnoredTitles(IgnoreBox.Text);
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
@@ -591,6 +601,14 @@ public partial class MainWindow : Window
                     _viewingItem = item;
                     _signatures[info.Handle] = sig;
                 }
+                else if (_viewedSinceScan.Contains(info.Handle))
+                {
+                    // The user manually opened/viewed this VM since the last scan, so
+                    // the snapshot moved because of them. Rebaseline silently to the
+                    // current frame instead of reporting Active.
+                    item.Status = "Idle";
+                    _signatures[info.Handle] = sig;
+                }
                 else
                 {
                     item.Status = isNew ? "Captured" : changed ? "Active" : "Idle";
@@ -606,6 +624,9 @@ public partial class MainWindow : Window
 
                 item.LastUpdated = DateTime.Now;
             }
+
+            // Manual-view rebaselines have been consumed for this scan.
+            _viewedSinceScan.Clear();
 
             // Drop windows that have closed since the last poll.
             foreach (var handle in _byHandle.Keys.ToList())

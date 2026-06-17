@@ -23,6 +23,41 @@ public static class ScreenText
     /// <summary>Title shown in the UI plus the chat body text used only for change detection.</summary>
     public readonly record struct ChatRead(string Title, string Body);
 
+    /// <summary>
+    /// Tokens that prove the captured region really is the VS Code chat panel. Unless
+    /// one of these is recognised in the header, we assume the window is showing
+    /// something else (a different app, or another VS Code view) and refuse to read a
+    /// title — this stops titles from updating when we're not in the right window.
+    /// </summary>
+    private static readonly string[] SignatureTokens = { "CHAT" };
+
+    /// <summary>
+    /// Headings that belong to the chat UI chrome rather than an actual chat title.
+    /// "Sessions" is the main listing header, so reading it as a title is meaningless.
+    /// User-editable via <see cref="SetIgnoredTitles"/>; matched case-insensitively
+    /// against the whole extracted title.
+    /// </summary>
+    private static string[] _ignoredTitles = { "sessions" };
+
+    /// <summary>The current ignore list (read-only view).</summary>
+    public static IReadOnlyList<string> IgnoredTitles => _ignoredTitles;
+
+    /// <summary>Default ignore keywords, shown when the user hasn't customised the list.</summary>
+    public const string DefaultIgnoredTitles = "sessions";
+
+    /// <summary>
+    /// Replaces the ignore list from a user-entered string. Entries may be separated
+    /// by commas or new lines; blank entries are dropped.
+    /// </summary>
+    public static void SetIgnoredTitles(string? raw)
+    {
+        _ignoredTitles = (raw ?? string.Empty)
+            .Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToArray();
+    }
+
     // Region of the captured window that holds the chat title (header band).
     private const double HeaderX = 0.58, HeaderY = 0.035, HeaderW = 0.42, HeaderH = 0.085;
     // Region used only to detect activity (the conversation body).
@@ -163,7 +198,8 @@ public static class ScreenText
     /// Extracts the chat title from the OCR'd header. The chat panel renders the
     /// "CHAT" tab label immediately before the title, so we take the text after the
     /// last "CHAT" token (dropping any editor-toolbar noise that precedes it) and
-    /// strip the back arrow / icon glyphs.
+    /// strip the back arrow / icon glyphs. When no signature token is present we
+    /// return empty, signalling "not the chat window — don't touch the title".
     /// </summary>
     private static string ExtractTitle(string text)
     {
@@ -172,18 +208,54 @@ public static class ScreenText
         string flat = Regex.Replace(text.Replace('\n', ' ').Replace('\r', ' '), @"\s+", " ").Trim();
         if (flat.Length == 0) return string.Empty;
 
-        var chatMatches = Regex.Matches(flat, @"\bCHAT\b", RegexOptions.IgnoreCase);
-        string candidate = chatMatches.Count > 0
-            ? flat[(chatMatches[^1].Index + chatMatches[^1].Length)..]
-            : flat;
+        // Signature gate: only trust this as a chat title when the panel's tab label
+        // was recognised. Without it we're almost certainly looking at another window.
+        var chatMatches = FindSignature(flat);
+        if (chatMatches is null)
+            return string.Empty;
 
-        candidate = CleanEnds(candidate);
+        string candidate = CleanEnds(flat[(chatMatches.Index + chatMatches.Length)..]);
 
-        // If nothing meaningful followed "CHAT", fall back to the header minus the tab label.
-        if (candidate.Count(char.IsLetter) < 3 && chatMatches.Count > 0)
-            candidate = CleanEnds(Regex.Replace(flat, @"\bCHAT\b", "", RegexOptions.IgnoreCase));
+        // If nothing meaningful followed the tab label, fall back to the header minus it.
+        if (candidate.Count(char.IsLetter) < 3)
+            candidate = CleanEnds(StripSignature(flat));
+
+        // Drop UI chrome headings (e.g. the "Sessions" listing header) that aren't titles.
+        if (IsIgnoredTitle(candidate))
+            return string.Empty;
 
         return candidate.Length > 140 ? candidate[..140] + "…" : candidate;
+    }
+
+    /// <summary>Returns the last signature-token match in the header, or null if none appear.</summary>
+    private static Match? FindSignature(string flat)
+    {
+        Match? last = null;
+        foreach (string token in SignatureTokens)
+        {
+            var matches = Regex.Matches(flat, $@"\b{Regex.Escape(token)}\b", RegexOptions.IgnoreCase);
+            if (matches.Count > 0 && (last is null || matches[^1].Index > last.Index))
+                last = matches[^1];
+        }
+        return last;
+    }
+
+    /// <summary>Removes every signature token from the header text.</summary>
+    private static string StripSignature(string flat)
+    {
+        foreach (string token in SignatureTokens)
+            flat = Regex.Replace(flat, $@"\b{Regex.Escape(token)}\b", "", RegexOptions.IgnoreCase);
+        return flat;
+    }
+
+    /// <summary>True when the extracted title is just a UI heading we want to ignore.</summary>
+    private static bool IsIgnoredTitle(string candidate)
+    {
+        string trimmed = candidate.Trim();
+        foreach (string ignored in IgnoredTitles)
+            if (string.Equals(trimmed, ignored, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     private static string CleanEnds(string s)

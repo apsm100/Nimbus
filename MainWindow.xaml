@@ -455,6 +455,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Filter" Foreground="{DynamicResource TextMuted}"
@@ -478,6 +479,13 @@
                                  ToolTip="How often chat titles are re-read"/>
                         <TextBlock Text="seconds" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{DynamicResource TextMuted}"/>
                     </StackPanel>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Ignore titles" Foreground="{DynamicResource TextMuted}"
+                               VerticalAlignment="Center" Margin="0,8,12,0"/>
+                    <TextBox Grid.Row="3" Grid.Column="1" x:Name="IgnoreBox" Margin="0,8,0,0"
+                             HorizontalAlignment="Left" Width="240" VerticalAlignment="Center"
+                             ToolTip="Comma-separated headings to ignore as chat titles (e.g. sessions)"
+                             Text="sessions"/>
                 </Grid>
 
                 <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="0,14"/>
