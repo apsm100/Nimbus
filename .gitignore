@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+
+# Publish output
+publish-fd/
+publish/
+*.user
+
+# Rider / VS
+.vs/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
