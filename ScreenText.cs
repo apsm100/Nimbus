@@ -18,6 +18,12 @@ public static class ScreenText
 {
     private static readonly OcrEngine? Engine = OcrEngine.TryCreateFromUserProfileLanguages();
 
+    // The Windows OCR engine is not documented as thread-safe. Both the status pass
+    // and the title pass run on background threads and their timers periodically
+    // align, so without this gate they can call RecognizeAsync concurrently — which
+    // can raise an AccessViolation that kills the process with no managed trace.
+    private static readonly SemaphoreSlim OcrGate = new(1, 1);
+
     public static bool IsAvailable => Engine is not null;
 
     /// <summary>Title shown in the UI plus the chat body text used only for change detection.</summary>
@@ -201,8 +207,17 @@ public static class ScreenText
         using SoftwareBitmap bitmap =
             SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, width, height);
 
-        OcrResult result = await Engine!.RecognizeAsync(bitmap);
-        return result.Text ?? string.Empty;
+        // Serialize all engine access — concurrent RecognizeAsync calls can crash natively.
+        await OcrGate.WaitAsync();
+        try
+        {
+            OcrResult result = await Engine!.RecognizeAsync(bitmap);
+            return result.Text ?? string.Empty;
+        }
+        finally
+        {
+            OcrGate.Release();
+        }
     }
 
     /// <summary>

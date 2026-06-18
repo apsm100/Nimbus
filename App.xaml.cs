@@ -6,8 +6,14 @@ namespace VmMonitor;
 
 public partial class App : System.Windows.Application
 {
+    /// <summary>Crash log written when an otherwise-unhandled exception escapes.</summary>
+    private static readonly string LogPath = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Nimbus", "crash.log");
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        HookCrashLogging();
         ApplyTheme(IsSystemLightTheme());
         base.OnStartup(e);
         // Re-theme live when the user flips Windows between light and dark.
@@ -16,6 +22,41 @@ public partial class App : System.Windows.Application
             if (args.Category == UserPreferenceCategory.General)
                 Dispatcher.Invoke(() => ApplyTheme(IsSystemLightTheme()));
         };
+    }
+
+    /// <summary>
+    /// Captures every channel an exception can escape through (UI dispatcher,
+    /// background threads, and unobserved tasks) and appends it to the crash log
+    /// so failures "after a while" leave a trace instead of vanishing silently.
+    /// </summary>
+    private void HookCrashLogging()
+    {
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            LogException("DispatcherUnhandledException", ex.Exception);
+            // Keep running for non-fatal UI exceptions so we can collect more.
+            ex.Handled = true;
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
+            LogException("AppDomain.UnhandledException", ex.ExceptionObject as Exception);
+
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, ex) =>
+        {
+            LogException("UnobservedTaskException", ex.Exception);
+            ex.SetObserved();
+        };
+    }
+
+    private static void LogException(string source, Exception? ex)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogPath)!);
+            string entry = $"=== {DateTime.Now:yyyy-MM-dd HH:mm:ss} [{source}] ===\n{ex}\n\n";
+            System.IO.File.AppendAllText(LogPath, entry);
+        }
+        catch { /* logging must never throw */ }
     }
 
     /// <summary>Reads the current Windows taskbar/system theme (true = light, false = dark).</summary>
