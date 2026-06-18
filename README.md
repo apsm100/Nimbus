@@ -4,6 +4,8 @@ A lightweight Windows tray app that keeps an eye on your remote-desktop dev VMs 
 
 Nimbus sits in the system tray as a cloud icon. Click it to pop a flyout (anchored to the tray, styled to match your Windows light/dark theme) listing every monitored VM window with its current activity status and the most recent chat titles read from the screen.
 
+<img width="951" height="643" alt="image" src="https://github.com/user-attachments/assets/bc198055-b9f1-4e88-986c-19e89f446263" />
+
 ## Why
 
 A remote desktop session (`msrdc` / the Windows App) only ever exposes **pixels** — there's no UI tree for the inner application. So the only way to know "what is my assistant doing in that VM right now" is to read the screen. Nimbus captures each VM window off-screen and uses the **on-device Windows OCR engine** to extract the chat title, then watches the conversation region for changes to flag activity — all without ever bringing the window to the foreground.
