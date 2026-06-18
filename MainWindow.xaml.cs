@@ -56,6 +56,8 @@ public partial class MainWindow : Window
             await RefreshAsync();
             InitOverlay.Visibility = Visibility.Collapsed;
             PositionToTray();
+            // Reclaim the memory spike from JIT + first OCR load once startup settles.
+            TrimWorkingSet();
         };
         // Re-anchor to the tray corner whenever the content height changes,
         // so a growing list never spills under the taskbar.
@@ -356,6 +358,20 @@ public partial class MainWindow : Window
         CancelAllEditing();
         AdvancedPanel.Visibility = Visibility.Collapsed;
         Hide();
+        // Now that the UI is hidden, hand the bulk of our working set back to the
+        // OS — a tray app shouldn't sit on ~100 MB of resident pages while idle.
+        TrimWorkingSet();
+    }
+
+    /// <summary>Releases paged-out memory back to Windows to shrink the resident footprint.</summary>
+    private static void TrimWorkingSet()
+    {
+        try
+        {
+            NativeMethods.SetProcessWorkingSetSize(
+                NativeMethods.GetCurrentProcess(), (IntPtr)(-1), (IntPtr)(-1));
+        }
+        catch { /* best-effort; ignore if the OS declines */ }
     }
 
     /// <summary>Drops any in-progress card renames so they don't persist when reopened.</summary>

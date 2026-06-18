@@ -20,6 +20,17 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
+    /// <summary>
+    /// Returns trimmed (paged-out) memory to the OS. Passing -1 for both limits
+    /// tells Windows to shrink the working set to the minimum currently needed,
+    /// which is ideal right after the app tucks itself away in the tray.
+    /// </summary>
+    [DllImport("kernel32.dll")]
+    public static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr min, IntPtr max);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowTextLength(IntPtr hWnd);
 
