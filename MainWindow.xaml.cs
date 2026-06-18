@@ -13,6 +13,9 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MonitoredWindow> _windows = new();
     private readonly Dictionary<IntPtr, MonitoredWindow> _byHandle = new();
     private readonly Dictionary<IntPtr, byte[]> _signatures = new();
+    // Last-known signature of each window's header band, so the periodic title pass
+    // can skip the expensive OCR call when the title hasn't visibly changed.
+    private readonly Dictionary<IntPtr, byte[]> _titleSignatures = new();
     // Windows the user manually focused since the last status scan. Their pixels
     // changed because of the user, not the VM, so the next scan rebaselines them
     // silently instead of flagging a (false) green "Active".
@@ -546,13 +549,13 @@ public partial class MainWindow : Window
             var snapshot = await Task.Run(() =>
             {
                 var infos = WindowCapture.Enumerate(filter, self);
-                var captured = new List<(WindowInfo Info, bool HasFrame, string? Title, byte[] Sig, bool IsNew, bool Changed)>();
+                var captured = new List<(WindowInfo Info, bool HasFrame, string? Title, byte[] Sig, byte[] TitleSig, bool IsNew, bool Changed)>();
                 foreach (var info in infos)
                 {
                     var frame = WindowCapture.Capture(info.Handle);
                     if (frame is null)
                     {
-                        captured.Add((info, false, null, Array.Empty<byte>(), false, false));
+                        captured.Add((info, false, null, Array.Empty<byte>(), Array.Empty<byte>(), false, false));
                         continue;
                     }
 
@@ -562,19 +565,24 @@ public partial class MainWindow : Window
                     bool changed = ScreenText.SignificantlyDiffers(prev, sig);
 
                     // Only OCR on first sight; periodic title refreshes are handled
-                    // separately by the slower "check for updates" pass.
+                    // separately by the slower "check for updates" pass. Seed the title
+                    // signature so that pass can skip OCR until the header band changes.
                     string? title = null;
+                    byte[] titleSig = Array.Empty<byte>();
                     if (isNew)
+                    {
                         title = ScreenText.ReadTitleAsync(frame).GetAwaiter().GetResult();
+                        titleSig = ScreenText.ComputeTitleSignature(frame);
+                    }
 
-                    captured.Add((info, true, title, sig, isNew, changed));
+                    captured.Add((info, true, title, sig, titleSig, isNew, changed));
                 }
                 return captured;
             });
 
             var seen = new HashSet<IntPtr>();
             IntPtr foreground = NativeMethods.GetForegroundWindow();
-            foreach (var (info, hasFrame, title, sig, isNew, changed) in snapshot)
+            foreach (var (info, hasFrame, title, sig, titleSig, isNew, changed) in snapshot)
             {
                 seen.Add(info.Handle);
 
@@ -622,6 +630,11 @@ public partial class MainWindow : Window
                     item.FullText = title;
                 }
 
+                // Seed the header signature for freshly captured windows so the title
+                // pass can skip OCR until the header actually changes.
+                if (isNew && hasFrame)
+                    _titleSignatures[info.Handle] = titleSig;
+
                 item.LastUpdated = DateTime.Now;
             }
 
@@ -638,6 +651,7 @@ public partial class MainWindow : Window
                     _windows.Remove(_byHandle[handle]);
                     _byHandle.Remove(handle);
                     _signatures.Remove(handle);
+                    _titleSignatures.Remove(handle);
                 }
             }
 
@@ -675,22 +689,34 @@ public partial class MainWindow : Window
             string filter = FilterBox.Text;
             IntPtr self = new WindowInteropHelper(this).Handle;
 
+            // Snapshot the last-known header signatures so the background pass can
+            // decide, per window, whether the title is worth re-OCRing at all.
+            var prevTitleSig = new Dictionary<IntPtr, byte[]>(_titleSignatures);
+
             var titles = await Task.Run(() =>
             {
-                var results = new List<(IntPtr Handle, string Title)>();
+                var results = new List<(IntPtr Handle, string Title, byte[] Sig, bool Ocred)>();
                 foreach (var info in WindowCapture.Enumerate(filter, self))
                 {
                     var frame = WindowCapture.Capture(info.Handle);
                     if (frame is null) continue;
-                    string title = ScreenText.ReadTitleAsync(frame).GetAwaiter().GetResult();
-                    results.Add((info.Handle, title));
+
+                    // OCR is the expensive part — only run it when the header band moved.
+                    byte[] sig = ScreenText.ComputeTitleSignature(frame);
+                    prevTitleSig.TryGetValue(info.Handle, out byte[]? prev);
+                    bool ocr = prev is null || ScreenText.SignificantlyDiffers(prev, sig);
+                    string title = ocr
+                        ? ScreenText.ReadTitleAsync(frame).GetAwaiter().GetResult()
+                        : string.Empty;
+                    results.Add((info.Handle, title, sig, ocr));
                 }
                 return results;
             });
 
-            foreach (var (handle, title) in titles)
+            foreach (var (handle, title, sig, ocred) in titles)
             {
-                if (!string.IsNullOrWhiteSpace(title) && _byHandle.TryGetValue(handle, out var item))
+                _titleSignatures[handle] = sig;
+                if (ocred && !string.IsNullOrWhiteSpace(title) && _byHandle.TryGetValue(handle, out var item))
                 {
                     item.Focus = title;
                     item.FullText = title;

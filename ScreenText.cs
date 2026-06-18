@@ -68,16 +68,27 @@ public static class ScreenText
     /// signatures with <see cref="SignificantlyDiffers"/> tells us whether anything
     /// changed WITHOUT running OCR, while tolerating remote-desktop compression noise.
     /// </summary>
-    public static byte[] ComputeActivitySignature(BitmapSource source)
+    public static byte[] ComputeActivitySignature(BitmapSource source) =>
+        ComputeRegionSignature(source, BodyX, BodyY, BodyW, BodyH);
+
+    /// <summary>
+    /// Cheap signature of the header (title) band. Lets the periodic title pass skip
+    /// the expensive OCR call whenever the title hasn't visibly changed.
+    /// </summary>
+    public static byte[] ComputeTitleSignature(BitmapSource source) =>
+        ComputeRegionSignature(source, HeaderX, HeaderY, HeaderW, HeaderH);
+
+    private static byte[] ComputeRegionSignature(BitmapSource source,
+        double relX, double relY, double relW, double relH)
     {
         int fullW = source.PixelWidth;
         int fullH = source.PixelHeight;
         if (fullW < 50 || fullH < 50) return Array.Empty<byte>();
 
-        int x = (int)(fullW * BodyX);
-        int y = (int)(fullH * BodyY);
-        int w = Math.Max(1, Math.Min(fullW - x, (int)(fullW * BodyW)));
-        int h = Math.Max(1, Math.Min(fullH - y, (int)(fullH * BodyH)));
+        int x = (int)(fullW * relX);
+        int y = (int)(fullH * relY);
+        int w = Math.Max(1, Math.Min(fullW - x, (int)(fullW * relW)));
+        int h = Math.Max(1, Math.Min(fullH - y, (int)(fullH * relH)));
 
         BitmapSource region = new CroppedBitmap(source, new Int32Rect(x, y, w, h));
 
