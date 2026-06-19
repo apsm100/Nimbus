@@ -206,6 +206,7 @@
             <Setter Property="Height" Value="28"/>
             <Setter Property="Content" Value="&#xE718;"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
             <Setter Property="ToolTip" Value="Pin to top"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -222,10 +223,19 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
+                <!-- Reveal on card hover. -->
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsPinned}" Value="True">
                     <Setter Property="Content" Value="&#xE840;"/>
                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                    <Setter Property="Visibility" Value="Visible"/>
                     <Setter Property="ToolTip" Value="Unpin"/>
+                </DataTrigger>
+                <!-- While editing, only the green check shows; hide everything else. -->
+                <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                    <Setter Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -239,6 +249,7 @@
             <Setter Property="Height" Value="28"/>
             <Setter Property="Content" Value="&#xE708;"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
             <Setter Property="ToolTip" Value="Mark as idle (send to bottom)"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -255,10 +266,19 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
+                <!-- Reveal on card hover. -->
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsIdle}" Value="True">
                     <Setter Property="Content" Value="&#xE708;"/>
                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                    <Setter Property="Visibility" Value="Visible"/>
                     <Setter Property="ToolTip" Value="Idle — click to restore"/>
+                </DataTrigger>
+                <!-- While editing, only the green check shows; hide everything else. -->
+                <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                    <Setter Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -271,6 +291,7 @@
             <Setter Property="Height" Value="28"/>
             <Setter Property="Content" Value="&#xE70F;"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
             <Setter Property="ToolTip" Value="Rename"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -288,6 +309,10 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
+                <!-- Reveal on card hover. -->
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <DataTrigger Binding="{Binding HasCustomName}" Value="True">
                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
                     <Setter Property="ToolTip" Value="Rename"/>
@@ -295,6 +320,7 @@
                 <DataTrigger Binding="{Binding IsEditing}" Value="True">
                     <Setter Property="Content" Value="&#xE73E;"/>
                     <Setter Property="Foreground" Value="#2BBF6A"/>
+                    <Setter Property="Visibility" Value="Visible"/>
                     <Setter Property="ToolTip" Value="Save"/>
                 </DataTrigger>
             </Style.Triggers>
@@ -378,9 +404,7 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="90"/>
                             </Grid.ColumnDefinitions>
                             <Ellipse Grid.Column="0" x:Name="StatusDotEl" Style="{StaticResource StatusDot}"
                                      VerticalAlignment="Center" Margin="0,0,10,0"
@@ -396,7 +420,7 @@
                                                ToolTip="{Binding FullText}"/>
                                     <TextBox x:Name="NameEdit" Visibility="Collapsed"
                                              FontSize="13" Padding="4,0,24,0" VerticalAlignment="Center"
-                                             HorizontalAlignment="Left" Width="230"
+                                             HorizontalAlignment="Stretch"
                                              VerticalContentAlignment="Center"
                                              CharacterCasing="Upper"
                                              Text="{Binding CustomName, UpdateSourceTrigger=PropertyChanged}"
@@ -404,8 +428,8 @@
                                              IsVisibleChanged="NameEdit_IsVisibleChanged"/>
                                     <Button x:Name="ClearEdit" Style="{StaticResource ClearButton}"
                                             Visibility="Collapsed"
-                                            HorizontalAlignment="Left" VerticalAlignment="Center"
-                                            Margin="206,0,0,0"
+                                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                                            Margin="0,0,4,0"
                                             Click="ClearEdit_Click"/>
                                 </Grid>
                                 <TextBlock Text="{Binding PreviousTitle1}" FontSize="11" FontWeight="SemiBold"
@@ -417,15 +441,18 @@
                                            Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
                                            Visibility="{Binding HasPreviousTitle2, Converter={StaticResource BoolToVis}}"/>
                             </StackPanel>
-                            <Button Grid.Column="2" Style="{StaticResource EditButton}"
-                                    VerticalAlignment="Center"
-                                    Click="EditButton_Click"/>
-                            <Button Grid.Column="3" Style="{StaticResource IdleButton}"
-                                    VerticalAlignment="Center" Margin="2,0,0,0"
-                                    Click="IdleButton_Click"/>
-                            <Button Grid.Column="4" Style="{StaticResource PinButton}"
-                                    VerticalAlignment="Center" Margin="2,0,0,0"
-                                    Click="PinButton_Click"/>
+                            <!-- Action buttons live in one right-aligned, fixed-width slot so
+                                 a lone visible icon (moon/check/pin) sits flush right instead of
+                                 floating, while the fixed width keeps the title from shifting. -->
+                            <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Style="{StaticResource EditButton}"
+                                        Click="EditButton_Click"/>
+                                <Button Style="{StaticResource IdleButton}" Margin="2,0,0,0"
+                                        Click="IdleButton_Click"/>
+                                <Button Style="{StaticResource PinButton}" Margin="2,0,0,0"
+                                        Click="PinButton_Click"/>
+                            </StackPanel>
                         </Grid>
                         <DataTemplate.Triggers>
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">
