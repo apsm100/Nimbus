@@ -136,6 +136,25 @@ public sealed class MonitoredWindow : INotifyPropertyChanged
     private static bool TitlesEqual(string a, string b) =>
         string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Raw previous derived titles, newest first — used to persist/restore history.</summary>
+    public IReadOnlyList<string> TitleHistory => _titleHistory;
+
+    /// <summary>Restores the previous-title history (e.g. from saved memory) without churning Focus.</summary>
+    public void SeedHistory(IEnumerable<string> history)
+    {
+        _titleHistory.Clear();
+        foreach (string t in history)
+            if (!string.IsNullOrWhiteSpace(t) && !_titleHistory.Any(h => TitlesEqual(h, t)))
+                _titleHistory.Add(t);
+        if (_titleHistory.Count > 2)
+            _titleHistory.RemoveRange(2, _titleHistory.Count - 2);
+
+        OnPropertyChanged(nameof(PreviousTitle1));
+        OnPropertyChanged(nameof(PreviousTitle2));
+        OnPropertyChanged(nameof(HasPreviousTitle1));
+        OnPropertyChanged(nameof(HasPreviousTitle2));
+    }
+
     /// <summary>Most recent previous derived chat title (upper-cased).</summary>
     public string PreviousTitle1 => _titleHistory.Count > 0 ? _titleHistory[0].ToUpperInvariant() : "";
     /// <summary>Second-most-recent previous derived chat title (upper-cased).</summary>
@@ -176,6 +195,26 @@ public sealed class MonitoredWindow : INotifyPropertyChanged
     {
         get => _isPinned;
         set => Set(ref _isPinned, value);
+    }
+
+    private bool _isIdle;
+    /// <summary>
+    /// User-marked "idle": the opposite of pinning — the card is pushed to the bottom
+    /// of the list and dimmed. Mutually exclusive with <see cref="IsPinned"/>.
+    /// </summary>
+    public bool IsIdle
+    {
+        get => _isIdle;
+        set => Set(ref _isIdle, value);
+    }
+
+    private bool _isCurrent;
+    /// <summary>True for the window the user most recently opened/viewed; drives the
+    /// highlight border on its card.</summary>
+    public bool IsCurrent
+    {
+        get => _isCurrent;
+        set => Set(ref _isCurrent, value);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

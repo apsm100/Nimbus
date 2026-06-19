@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private bool _suppressNextSelection;
     private long _orderSeq;
     private MonitoredWindow? _viewingItem;
+    private MonitoredWindow? _currentItem;
 
     public MainWindow()
     {
@@ -126,6 +127,7 @@ public partial class MainWindow : Window
             item.Order = ++_orderSeq;
             _viewingItem = item;
             _viewedSinceScan.Add(hwnd);
+            MarkCurrent(item);
             ResortWindows();
         }
 
@@ -134,11 +136,25 @@ public partial class MainWindow : Window
         RecomputeTrayIcon();
     }
 
-    /// <summary>Reorders the list so pinned cards sit on top, then most recently opened/activated.</summary>
+    /// <summary>Marks <paramref name="item"/> as the most-recently-viewed window,
+    /// clearing the highlight border from whichever card held it before.</summary>
+    private void MarkCurrent(MonitoredWindow item)
+    {
+        if (ReferenceEquals(_currentItem, item))
+            return;
+        if (_currentItem is not null)
+            _currentItem.IsCurrent = false;
+        item.IsCurrent = true;
+        _currentItem = item;
+    }
+
+    /// <summary>Reorders the list so pinned cards sit on top, idle cards sink to the
+    /// bottom, and the rest are ordered by most recently opened/activated.</summary>
     private void ResortWindows()
     {
         var sorted = _windows
             .OrderByDescending(w => w.IsPinned)
+            .ThenBy(w => w.IsIdle)
             .ThenByDescending(w => w.Order)
             .ToList();
         for (int i = 0; i < sorted.Count; i++)
@@ -154,7 +170,25 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement fe && fe.DataContext is MonitoredWindow item)
         {
             item.IsPinned = !item.IsPinned;
+            // Pinning and marking idle are opposites; turning one on clears the other.
+            if (item.IsPinned)
+                item.IsIdle = false;
             ResortWindows();
+            WindowMemory.Remember(item);
+        }
+        e.Handled = true;
+    }
+
+    private void IdleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is MonitoredWindow item)
+        {
+            item.IsIdle = !item.IsIdle;
+            // Marking idle is the opposite of pinning; turning one on clears the other.
+            if (item.IsIdle)
+                item.IsPinned = false;
+            ResortWindows();
+            WindowMemory.Remember(item);
         }
         e.Handled = true;
     }
@@ -164,7 +198,12 @@ public partial class MainWindow : Window
     private void EditButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement fe && fe.DataContext is MonitoredWindow item)
+        {
             item.IsEditing = !item.IsEditing;
+            // Closing the editor commits the name; persist it.
+            if (!item.IsEditing)
+                WindowMemory.Remember(item);
+        }
         e.Handled = true;
     }
 
@@ -186,6 +225,7 @@ public partial class MainWindow : Window
             // would otherwise select it (and foreground the VM). Suppress that.
             _suppressNextSelection = true;
             item.IsEditing = false;
+            WindowMemory.Remember(item);
             e.Handled = true;
         }
     }
@@ -196,7 +236,10 @@ public partial class MainWindow : Window
         // button, let those handlers manage state (avoids prematurely closing).
         if (MouseOverEditButton()) return;
         if (sender is FrameworkElement fe && fe.DataContext is MonitoredWindow item)
+        {
             item.IsEditing = false;
+            WindowMemory.Remember(item);
+        }
     }
 
     private void ClearEdit_Click(object sender, RoutedEventArgs e)
@@ -527,6 +570,12 @@ public partial class MainWindow : Window
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
+    private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        WindowMemory.Clear();
+        StatusBar.Text = $"Memory cleared · {DateTime.Now:HH:mm:ss}";
+    }
+
     private void ToggleButton_Click(object sender, RoutedEventArgs e)
     {
         _isPolling = !_isPolling;
@@ -606,6 +655,20 @@ public partial class MainWindow : Window
                 {
                     item = new MonitoredWindow(info.Handle, info.Title, info.ProcessName);
                     item.Order = ++_orderSeq;
+                    // Restore what we last knew about this window: its name, pin/idle
+                    // state, and the activity title — keyed by the unique window title
+                    // so each VM is remembered separately.
+                    var mem = WindowMemory.Get(info.Title);
+                    if (mem is not null)
+                    {
+                        item.CustomName = mem.CustomName;
+                        item.IsPinned = mem.IsPinned;
+                        item.IsIdle = mem.IsIdle;
+                        if (mem.History is { Count: > 0 })
+                            item.SeedHistory(mem.History);
+                        if (!string.IsNullOrWhiteSpace(mem.LastTitle))
+                            item.Focus = mem.LastTitle;
+                    }
                     _byHandle[info.Handle] = item;
                     _windows.Add(item);
                 }
@@ -644,6 +707,7 @@ public partial class MainWindow : Window
                 {
                     item.Focus = title;
                     item.FullText = title;
+                    WindowMemory.Remember(item);
                 }
 
                 // Seed the header signature for freshly captured windows so the title
@@ -736,6 +800,7 @@ public partial class MainWindow : Window
                 {
                     item.Focus = title;
                     item.FullText = title;
+                    WindowMemory.Remember(item);
                 }
             }
         }

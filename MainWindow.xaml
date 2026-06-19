@@ -230,6 +230,42 @@
             </Style.Triggers>
         </Style>
 
+        <!-- "Mark as idle" toggle on each card: the opposite of pinning. An icon button
+             beside the pin, dimmed; sinks the card to the bottom of the list. -->
+        <Style x:Key="IdleButton" TargetType="Button">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Content" Value="&#xE708;"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="ToolTip" Value="Mark as idle (send to bottom)"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ToolBtnHover}"/>
+                                <Setter Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsIdle}" Value="True">
+                    <Setter Property="Content" Value="&#xE708;"/>
+                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                    <Setter Property="Opacity" Value="1"/>
+                    <Setter Property="ToolTip" Value="Idle — click to restore"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- Rename (pencil) on each card; becomes a checkmark while editing -->
         <Style x:Key="EditButton" TargetType="Button">
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
@@ -299,7 +335,8 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="bd" Background="{DynamicResource CardBg}" CornerRadius="8" Padding="10,8">
+                        <Border x:Name="bd" Background="{DynamicResource CardBg}" CornerRadius="8" Padding="10,8"
+                                BorderBrush="Transparent" BorderThickness="1.5">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -309,6 +346,10 @@
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="bd" Property="Background" Value="{DynamicResource CardSelectedBg}"/>
                             </Trigger>
+                            <!-- Highlight the most recently opened/viewed VM. -->
+                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -336,10 +377,11 @@
                      SelectionChanged="WindowsList_SelectionChanged">
                 <ListBox.ItemTemplate>
                     <DataTemplate DataType="{x:Type local:MonitoredWindow}">
-                        <Grid>
+                        <Grid x:Name="CardRoot">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
@@ -381,7 +423,10 @@
                             <Button Grid.Column="2" Style="{StaticResource EditButton}"
                                     VerticalAlignment="Center"
                                     Click="EditButton_Click"/>
-                            <Button Grid.Column="3" Style="{StaticResource PinButton}"
+                            <Button Grid.Column="3" Style="{StaticResource IdleButton}"
+                                    VerticalAlignment="Center" Margin="2,0,0,0"
+                                    Click="IdleButton_Click"/>
+                            <Button Grid.Column="4" Style="{StaticResource PinButton}"
                                     VerticalAlignment="Center" Margin="2,0,0,0"
                                     Click="PinButton_Click"/>
                         </Grid>
@@ -389,6 +434,10 @@
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">
                                 <Setter TargetName="TitleText" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="NameEdit" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                            <!-- Marked idle: dim the whole card to signal it's de-prioritized. -->
+                            <DataTrigger Binding="{Binding IsIdle}" Value="True">
+                                <Setter TargetName="CardRoot" Property="Opacity" Value="0.45"/>
                             </DataTrigger>
                             <MultiDataTrigger>
                                 <MultiDataTrigger.Conditions>
@@ -444,6 +493,10 @@
                     <Button x:Name="ToggleButton" Content="Pause"
                             Style="{StaticResource ToolButton}" Padding="14,6" FontSize="11"
                             Click="ToggleButton_Click"/>
+                    <Button x:Name="ClearMemoryButton" Content="Clear memory"
+                            Style="{StaticResource ToolButton}" Padding="14,6" FontSize="11"
+                            Margin="8,0,0,0" ToolTip="Forget the saved last-known state for every window"
+                            Click="ClearMemoryButton_Click"/>
                 </StackPanel>
 
                 <Grid>
@@ -522,8 +575,6 @@
                     </Ellipse>
                     <TextBlock Text="Nimbus" FontSize="15" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center" Margin="0,14,0,2"/>
-                    <TextBlock Text="Initializing…" FontSize="12" Foreground="{DynamicResource TextMuted}"
-                               HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>

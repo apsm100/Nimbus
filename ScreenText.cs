@@ -137,7 +137,7 @@ public static class ScreenText
         if (Engine is null) return string.Empty;
         if (source.PixelWidth < 50 || source.PixelHeight < 50) return string.Empty;
 
-        string header = await OcrRegionAsync(source, HeaderX, HeaderY, HeaderW, HeaderH);
+        var header = await OcrRegionLinesAsync(source, HeaderX, HeaderY, HeaderW, HeaderH);
         return ExtractTitle(header);
     }
 
@@ -155,7 +155,7 @@ public static class ScreenText
         if (w < 50 || h < 50) return default;
 
         // Chat header band (the "CHAT" tab + title row); excludes the body below.
-        string header = await OcrRegionAsync(source, HeaderX, HeaderY, HeaderW, HeaderH);
+        var header = await OcrRegionLinesAsync(source, HeaderX, HeaderY, HeaderW, HeaderH);
         string title = ExtractTitle(header);
 
         // Conversation area below the header — used only for activity detection.
@@ -165,6 +165,11 @@ public static class ScreenText
     }
 
     private static async Task<string> OcrRegionAsync(BitmapSource source,
+        double relX, double relY, double relW, double relH) =>
+        string.Join(' ', await OcrRegionLinesAsync(source, relX, relY, relW, relH));
+
+    /// <summary>OCRs a relative region and returns its recognised text as separate lines.</summary>
+    private static async Task<IReadOnlyList<string>> OcrRegionLinesAsync(BitmapSource source,
         double relX, double relY, double relW, double relH)
     {
         int fullW = source.PixelWidth;
@@ -178,7 +183,7 @@ public static class ScreenText
         BitmapSource region = new CroppedBitmap(source, new Int32Rect(x, y, w, h));
         // Upscale small text 2x for more reliable recognition.
         region = new TransformedBitmap(region, new ScaleTransform(2.0, 2.0));
-        return await RunOcrAsync(region);
+        return await RunOcrLinesAsync(region);
     }
 
     /// <summary>Order-independent hash of the letters/digits in text, for change detection.</summary>
@@ -194,7 +199,11 @@ public static class ScreenText
         return hash;
     }
 
-    private static async Task<string> RunOcrAsync(BitmapSource source)
+    private static async Task<string> RunOcrAsync(BitmapSource source) =>
+        string.Join(' ', await RunOcrLinesAsync(source));
+
+    /// <summary>Runs the OCR engine and returns each recognised line of text separately.</summary>
+    private static async Task<IReadOnlyList<string>> RunOcrLinesAsync(BitmapSource source)
     {
         var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
         int width = converted.PixelWidth;
@@ -212,7 +221,7 @@ public static class ScreenText
         try
         {
             OcrResult result = await Engine!.RecognizeAsync(bitmap);
-            return result.Text ?? string.Empty;
+            return result.Lines.Select(l => l.Text ?? string.Empty).ToList();
         }
         finally
         {
@@ -221,30 +230,47 @@ public static class ScreenText
     }
 
     /// <summary>
-    /// Extracts the chat title from the OCR'd header. The chat panel renders the
-    /// "CHAT" tab label immediately before the title, so we take the text after the
-    /// last "CHAT" token (dropping any editor-toolbar noise that precedes it) and
-    /// strip the back arrow / icon glyphs. When no signature token is present we
-    /// return empty, signalling "not the chat window — don't touch the title".
+    /// Extracts the chat title from the OCR'd header lines. The chat panel renders the
+    /// "CHAT" tab label immediately before the title, so we locate the line bearing that
+    /// tab and read the title from the SAME line (after the tab) or the next line — never
+    /// concatenating the whole band. Reading a single line is what stops adjacent editor
+    /// chrome (the "Sharing with Agent" badge, OAuth-scope tooltips, body text, …) from
+    /// being glued onto the title. When no signature token is present we return empty,
+    /// signalling "not the chat window — don't touch the title".
     /// </summary>
-    private static string ExtractTitle(string text)
+    private static string ExtractTitle(IReadOnlyList<string> lines)
     {
-        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        if (lines is null || lines.Count == 0) return string.Empty;
 
-        string flat = Regex.Replace(text.Replace('\n', ' ').Replace('\r', ' '), @"\s+", " ").Trim();
-        if (flat.Length == 0) return string.Empty;
+        var clean = lines
+            .Select(l => Regex.Replace((l ?? string.Empty).Replace('\n', ' ').Replace('\r', ' '), @"\s+", " ").Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+        if (clean.Count == 0) return string.Empty;
 
-        // Signature gate: only trust this as a chat title when the panel's tab label
-        // was recognised. Without it we're almost certainly looking at another window.
-        var chatMatches = FindSignature(flat);
-        if (chatMatches is null)
+        // Signature gate: find the line carrying the panel's "CHAT" tab label (last one
+        // wins). Without it we're almost certainly looking at another window.
+        int sigLine = -1, sigEnd = 0;
+        for (int i = 0; i < clean.Count; i++)
+        {
+            var m = FindSignature(clean[i]);
+            if (m is not null) { sigLine = i; sigEnd = m.Index + m.Length; }
+        }
+        if (sigLine < 0) return string.Empty;
+
+        // Prefer text trailing the tab label on its own line; otherwise drop to the next
+        // recognised line. We deliberately read at most one line so neighbouring chrome
+        // on other lines can never be appended to the title.
+        string candidate = CleanEnds(clean[sigLine][sigEnd..]);
+        if (candidate.Count(char.IsLetter) < 3 && sigLine + 1 < clean.Count)
+            candidate = CleanEnds(clean[sigLine + 1]);
+
+        // Strip known editor overlays (e.g. the screen-share "Sharing with Agent" badge)
+        // that can bleed into the header band, tolerating OCR misreads.
+        candidate = CleanEnds(StripOverlayNoise(candidate));
+
+        if (candidate.Count(char.IsLetter) < 2)
             return string.Empty;
-
-        string candidate = CleanEnds(flat[(chatMatches.Index + chatMatches.Length)..]);
-
-        // If nothing meaningful followed the tab label, fall back to the header minus it.
-        if (candidate.Count(char.IsLetter) < 3)
-            candidate = CleanEnds(StripSignature(flat));
 
         // Drop UI chrome headings (e.g. the "Sessions" listing header) that aren't titles.
         if (IsIgnoredTitle(candidate))
@@ -266,12 +292,65 @@ public static class ScreenText
         return last;
     }
 
-    /// <summary>Removes every signature token from the header text.</summary>
-    private static string StripSignature(string flat)
+    /// <summary>
+    /// Persistent editor overlays that share the header band but aren't part of the chat
+    /// title. Matched word-by-word with OCR-error tolerance, so misreads such as
+    /// "Sharinq with Aqent" are still recognised and removed.
+    /// </summary>
+    private static readonly string[][] OverlayPhrases =
     {
-        foreach (string token in SignatureTokens)
-            flat = Regex.Replace(flat, $@"\b{Regex.Escape(token)}\b", "", RegexOptions.IgnoreCase);
-        return flat;
+        new[] { "sharing", "with", "agent" }
+    };
+
+    /// <summary>Removes any known overlay phrase from the candidate, tolerating OCR noise.</summary>
+    private static string StripOverlayNoise(string candidate)
+    {
+        var words = candidate.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        foreach (string[] phrase in OverlayPhrases)
+        {
+            for (int i = 0; i + phrase.Length <= words.Count; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < phrase.Length; j++)
+                {
+                    if (!FuzzyWordEquals(words[i + j], phrase[j])) { match = false; break; }
+                }
+                if (match)
+                {
+                    words.RemoveRange(i, phrase.Length);
+                    i--;
+                }
+            }
+        }
+        return string.Join(' ', words);
+    }
+
+    /// <summary>True when an OCR'd word matches the target within a small edit distance.</summary>
+    private static bool FuzzyWordEquals(string ocrWord, string target)
+    {
+        string a = new string(ocrWord.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        if (a.Length == 0) return false;
+        int allowed = target.Length <= 4 ? 1 : 2;
+        return Levenshtein(a, target) <= allowed;
+    }
+
+    /// <summary>Standard two-row Levenshtein edit distance between two strings.</summary>
+    private static int Levenshtein(string a, string b)
+    {
+        var prev = new int[b.Length + 1];
+        var cur = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) prev[j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            cur[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                cur[j] = Math.Min(Math.Min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + cost);
+            }
+            (prev, cur) = (cur, prev);
+        }
+        return prev[b.Length];
     }
 
     /// <summary>True when the extracted title is just a UI heading we want to ignore.</summary>
