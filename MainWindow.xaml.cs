@@ -573,7 +573,19 @@ public partial class MainWindow : Window
     private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)
     {
         WindowMemory.Clear();
+
+        // Reset the live list so the cleared state shows immediately: drop every
+        // card and the cached signatures, then re-scan from scratch.
+        _windows.Clear();
+        _byHandle.Clear();
+        _signatures.Clear();
+        _titleSignatures.Clear();
+        _viewedSinceScan.Clear();
+        _viewingItem = null;
+        _currentItem = null;
+
         StatusBar.Text = $"Memory cleared · {DateTime.Now:HH:mm:ss}";
+        _ = RefreshAsync();
     }
 
     private void ToggleButton_Click(object sender, RoutedEventArgs e)
