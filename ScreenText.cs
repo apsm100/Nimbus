@@ -65,7 +65,10 @@ public static class ScreenText
     }
 
     // Region of the captured window that holds the chat title (header band).
-    private const double HeaderX = 0.58, HeaderY = 0.035, HeaderW = 0.42, HeaderH = 0.085;
+    // Tall enough to span the panel toolbar (the "Update"/sync banner), the "CHAT"
+    // tab, AND the title row below it — newer VS Code builds push the title down, so
+    // a short band would clip it and we'd read no title at all.
+    private const double HeaderX = 0.58, HeaderY = 0.035, HeaderW = 0.42, HeaderH = 0.14;
     // Region used only to detect activity (the conversation body).
     private const double BodyX = 0.58, BodyY = 0.13, BodyW = 0.42, BodyH = 0.40;
 
@@ -249,34 +252,76 @@ public static class ScreenText
         if (clean.Count == 0) return string.Empty;
 
         // Signature gate: find the line carrying the panel's "CHAT" tab label (last one
-        // wins). Without it we're almost certainly looking at another window.
+        // wins). It's the strongest proof we're looking at the chat panel.
         int sigLine = -1, sigEnd = 0;
         for (int i = 0; i < clean.Count; i++)
         {
             var m = FindSignature(clean[i]);
             if (m is not null) { sigLine = i; sigEnd = m.Index + m.Length; }
         }
-        if (sigLine < 0) return string.Empty;
 
-        // Prefer text trailing the tab label on its own line; otherwise drop to the next
-        // recognised line. We deliberately read at most one line so neighbouring chrome
-        // on other lines can never be appended to the title.
-        string candidate = CleanEnds(clean[sigLine][sigEnd..]);
-        if (candidate.Count(char.IsLetter) < 3 && sigLine + 1 < clean.Count)
-            candidate = CleanEnds(clean[sigLine + 1]);
+        // Build the ordered list of places the title can appear. We never glue lines
+        // together, but we DO keep looking past lines that turn out to be pure editor
+        // chrome (the "Sharing with Agent" badge, the "Update" button, …) so a single
+        // noisy header line can't make us give up and report no title.
+        //
+        // When the "CHAT" tab label was recognised the title sits on, or just below,
+        // that line. When it WASN'T (the small tab glyph is easy for OCR to miss) we
+        // fall back to scanning every line and trusting only ones that look like a
+        // chat title — VS Code renders session titles in upper-case, so body prose and
+        // toolbar chrome from a non-chat window are naturally excluded.
+        bool anchored = sigLine >= 0;
+        var candidates = new List<string>();
+        if (anchored)
+        {
+            candidates.Add(clean[sigLine][sigEnd..]);
+            for (int i = sigLine + 1; i < clean.Count; i++)
+                candidates.Add(clean[i]);
+        }
+        else
+        {
+            candidates.AddRange(clean);
+        }
 
-        // Strip known editor overlays (e.g. the screen-share "Sharing with Agent" badge)
-        // that can bleed into the header band, tolerating OCR misreads.
-        candidate = CleanEnds(StripOverlayNoise(candidate));
+        foreach (string raw in candidates)
+        {
+            // Strip known editor overlays before judging the line, tolerating OCR misreads,
+            // so a line that is ONLY chrome collapses to empty and we move to the next one.
+            string candidate = CleanEnds(StripOverlayNoise(CleanEnds(raw)));
 
-        if (candidate.Count(char.IsLetter) < 2)
-            return string.Empty;
+            if (candidate.Count(char.IsLetter) < 2)
+                continue;
 
-        // Drop UI chrome headings (e.g. the "Sessions" listing header) that aren't titles.
-        if (IsIgnoredTitle(candidate))
-            return string.Empty;
+            // Drop UI chrome headings (e.g. the "Sessions" listing header) that aren't titles.
+            if (IsIgnoredTitle(candidate))
+                continue;
 
-        return candidate.Length > 140 ? candidate[..140] + "…" : candidate;
+            // Without the CHAT anchor, only accept a line shaped like a chat title so we
+            // don't grab body text or chrome from a window that isn't the chat panel.
+            if (!anchored && !LooksLikeTitle(candidate))
+                continue;
+
+            return candidate.Length > 140 ? candidate[..140] + "…" : candidate;
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// True when a line resembles a VS Code chat session title: a few letters, mostly
+    /// upper-case. Used only as a fallback when the "CHAT" tab label wasn't recognised,
+    /// to tell a real title apart from lowercase body prose or mixed-case chrome.
+    /// </summary>
+    private static bool LooksLikeTitle(string s)
+    {
+        int upper = 0, lower = 0;
+        foreach (char c in s)
+        {
+            if (char.IsUpper(c)) upper++;
+            else if (char.IsLower(c)) lower++;
+        }
+        int letters = upper + lower;
+        return letters >= 3 && upper >= letters * 0.7;
     }
 
     /// <summary>Returns the last signature-token match in the header, or null if none appear.</summary>
